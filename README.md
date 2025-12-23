@@ -43,7 +43,7 @@ An Indian food calorie tracking app powered by AI. Scan food images, describe me
    
    Create a `.env` file in the project root:
    ```env
-   PORTKEY_API_KEY=your_portkey_api_key_here
+   EXPO_PUBLIC_PORTKEY_API_KEY=your_portkey_api_key_here
    ```
    
    Get your Portkey API key from [portkey.ai](https://portkey.ai)
@@ -60,11 +60,26 @@ An Indian food calorie tracking app powered by AI. Scan food images, describe me
 
 ## Building APK
 
-```bash
-# Using EAS Build (recommended)
-npx eas build --platform android --profile preview
+### Option 1: EAS Build (Recommended)
 
-# Or run locally (requires Android SDK)
+1. **Login to Expo**
+   ```bash
+   eas login
+   ```
+
+2. **Add your API key to EAS** (one-time setup)
+   ```bash
+   eas env:create --name EXPO_PUBLIC_PORTKEY_API_KEY --value "your_api_key" --environment production --visibility sensitive
+   ```
+
+3. **Build the APK**
+   ```bash
+   eas build --platform android --profile production
+   ```
+
+### Option 2: Local Build (Requires Android SDK)
+
+```bash
 npx expo run:android --variant release
 ```
 

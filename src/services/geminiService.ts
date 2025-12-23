@@ -5,7 +5,7 @@
 
 import { getSystemPrompt, getUserPrompt } from '../config/prompts';
 import { CONFIG } from '../config/config';
-import { PORTKEY_API_KEY } from '@env';
+import { PORTKEY_API_KEY, EXPO_PUBLIC_PORTKEY_API_KEY } from '@env';
 
 // Get Portkey settings from config
 const PORTKEY_CONFIG_ID = CONFIG.PORTKEY.CONFIG_ID;
@@ -103,11 +103,13 @@ const FOOD_ANALYSIS_SCHEMA = {
 };
 
 // Get API key from environment
+// EXPO_PUBLIC_ prefix is used for EAS build compatibility
 const getApiKey = (): string => {
-    const apiKey = PORTKEY_API_KEY || '';
+    // Try EXPO_PUBLIC_ version first (for EAS builds), then fallback to standard (for local dev)
+    const apiKey = EXPO_PUBLIC_PORTKEY_API_KEY || PORTKEY_API_KEY || '';
 
     if (!apiKey) {
-        console.warn('PORTKEY_API_KEY not found in .env file');
+        console.warn('PORTKEY_API_KEY not found. Set EXPO_PUBLIC_PORTKEY_API_KEY in .env or EAS secrets.');
     }
 
     return apiKey;

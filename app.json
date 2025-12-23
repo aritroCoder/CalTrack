@@ -24,7 +24,8 @@
         "backgroundColor": "#1a1a2e"
       },
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ],
       "package": "com.caltrack.indianfood"
     },
@@ -34,7 +35,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "caltrack-indian-food"
+        "projectId": "a1dad0f8-c259-4c2d-afef-709bf7fcbe71"
       }
     },
     "plugins": [
@@ -45,7 +46,9 @@
           "cameraPermission": "CalTrack needs camera access to scan your food."
         }
       ],
-      "expo-sqlite"
-    ]
+      "expo-sqlite",
+      "expo-font"
+    ],
+    "owner": "aritrocoder"
   }
 }
