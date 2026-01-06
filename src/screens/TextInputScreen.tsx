@@ -1,7 +1,7 @@
 // Text Input Screen
 // Natural language food description (AI)
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { View, ScrollView, Alert, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../store/appStore';
 import { analyzeFoodFromText } from '../services/geminiService';
+import { getCurrentNetworkState } from '../services/networkStatus';
 import { RootStackParamList } from '../../App';
 
 const EXAMPLE_PROMPTS = [
@@ -43,7 +44,10 @@ export const TextInputScreen: React.FC = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
-    React.useEffect(() => {
+    // Abort controller for cancellation
+    const abortControllerRef = useRef<AbortController | null>(null);
+
+    useEffect(() => {
         const keyboardDidShowListener = Keyboard.addListener(
             'keyboardDidShow',
             () => {
@@ -57,9 +61,14 @@ export const TextInputScreen: React.FC = () => {
             }
         );
 
+        // Cleanup - abort request if component unmounts
         return () => {
             keyboardDidShowListener.remove();
             keyboardDidHideListener.remove();
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+            }
         };
     }, []);
 
@@ -72,6 +81,23 @@ export const TextInputScreen: React.FC = () => {
         setIsProcessing(true);
         Keyboard.dismiss();
 
+        // Pre-flight network check
+        try {
+            const network = await getCurrentNetworkState();
+            if (!network.isConnected || !network.isInternetReachable) {
+                Alert.alert('No Connection', 'You appear to be offline. Please check your connection and try again.');
+                setIsProcessing(false);
+                return;
+            }
+        } catch (checkError) {
+            console.warn('Network check failed:', checkError);
+            // Continue anyway
+        }
+
+        // Create abort controller for this request
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
         try {
             // Use dummy image URI for text-based entries placeholder
             setCurrentImageUri(null);
@@ -82,17 +108,26 @@ export const TextInputScreen: React.FC = () => {
             // Allow navigation to happen immediately 
             navigation.navigate('Result');
 
-            // Perform analysis with mode
-            const result = await analyzeFoodFromText(text, mode);
-            setCurrentResult(result);
+            // Perform analysis with mode and abort signal
+            const result = await analyzeFoodFromText(text, mode, controller.signal);
+
+            // Only set result if not aborted
+            if (!controller.signal.aborted) {
+                setCurrentResult(result);
+            }
 
         } catch (error) {
+            // Don't show error if aborted
+            if (controller.signal.aborted) {
+                return;
+            }
             console.error(error);
             Alert.alert('Error', 'Failed to analyze text. Please try again.');
             navigation.goBack();
         } finally {
             setIsProcessing(false);
             setIsAnalyzing(false);
+            abortControllerRef.current = null;
         }
     };
 

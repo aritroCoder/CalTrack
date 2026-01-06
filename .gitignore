@@ -58,3 +58,7 @@ yarn-error.*
 
 # Testing
 coverage/
+
+# AI
+opencode*
+.opencode*

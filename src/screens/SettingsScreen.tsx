@@ -120,7 +120,7 @@ export const SettingsScreen: React.FC = () => {
                         <Divider />
                         <List.Item
                             title="Version"
-                            description="1.0.0"
+                            description="1.0.1"
                             left={props => <List.Icon {...props} icon="information" />}
                         />
                         <Divider />

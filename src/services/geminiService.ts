@@ -1,11 +1,12 @@
 // LLM Service using Portkey AI Gateway
 // Routes requests through Portkey for reliability, fallbacks, and observability
-// Uses direct fetch to Portkey REST API (React Native compatible)
+// Uses resilient fetch wrapper for timeout, retry, and abort support
 // Leverages structured outputs with JSON Schema for reliable parsing
 
 import { getSystemPrompt, getUserPrompt } from '../config/prompts';
 import { CONFIG } from '../config/config';
 import { PORTKEY_API_KEY, EXPO_PUBLIC_PORTKEY_API_KEY } from '@env';
+import { resilientFetch, ResilientFetchError } from './networkClient';
 
 // Get Portkey settings from config
 const PORTKEY_CONFIG_ID = CONFIG.PORTKEY.CONFIG_ID;
@@ -124,9 +125,10 @@ const makePortkeyRequest = async (
         maxTokens?: number;
         temperature?: number;
         useStructuredOutput?: boolean;
+        signal?: AbortSignal;
     } = {}
 ): Promise<any> => {
-    const { maxTokens = 4096, temperature = 0.3, useStructuredOutput = true } = options;
+    const { maxTokens = 4096, temperature = 0.3, useStructuredOutput = true, signal } = options;
 
     const apiKey = getApiKey();
     if (!apiKey) {
@@ -147,15 +149,42 @@ const makePortkeyRequest = async (
         };
     }
 
-    const response = await fetch(`${PORTKEY_BASE_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-portkey-api-key': apiKey,
-            'x-portkey-config': PORTKEY_CONFIG_ID,
-        },
-        body: JSON.stringify(requestBody),
-    });
+    // Use resilientFetch with timeout, retry, and abort support
+    let response: Response;
+    try {
+        response = await resilientFetch(`${PORTKEY_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-portkey-api-key': apiKey,
+                'x-portkey-config': PORTKEY_CONFIG_ID,
+            },
+            body: JSON.stringify(requestBody),
+            timeoutMs: 30000,
+            retries: 2,
+            retryDelayMs: 1500,
+            backoffFactor: 2,
+            abortSignal: signal,
+        });
+    } catch (error) {
+        // Map ResilientFetchError to user-friendly messages
+        if (error instanceof ResilientFetchError) {
+            switch (error.code) {
+                case 'timeout':
+                    throw new Error('The analysis is taking too long. Please check your connection and try again.');
+                case 'aborted':
+                    throw error; // Let caller handle cancellation
+                case 'offline':
+                case 'network':
+                    throw new Error('Network error. Please check your internet connection and try again.');
+                case 'server':
+                    throw new Error(`Server error (${error.status}). Please try again later.`);
+                default:
+                    throw new Error('An error occurred while contacting the analysis service.');
+            }
+        }
+        throw error;
+    }
 
     if (!response.ok) {
         const errorText = await response.text();
@@ -230,12 +259,14 @@ const parseJsonResponse = (text: string): AnalysisResult => {
  * @param imageBase64 - Base64 encoded image data
  * @param mimeType - Image MIME type (e.g., 'image/jpeg')
  * @param mode - Cooking mode (light, homemade, restaurant)
+ * @param signal - Optional AbortSignal for cancellation
  * @returns Analysis result with food items and calories
  */
 export const analyzeFood = async (
     imageBase64: string,
     mimeType: string,
-    mode: string
+    mode: string,
+    signal?: AbortSignal
 ): Promise<AnalysisResult> => {
     try {
         const systemPrompt = getSystemPrompt(mode);
@@ -270,6 +301,7 @@ export const analyzeFood = async (
             maxTokens: 4096,
             temperature: 0.3,
             useStructuredOutput: true,
+            signal,
         });
 
         if (!textContent) {
@@ -293,6 +325,16 @@ export const analyzeFood = async (
             };
         }
     } catch (error) {
+        // Handle aborted requests gracefully
+        if (error instanceof ResilientFetchError && error.code === 'aborted') {
+            return {
+                success: false,
+                error: 'Analysis cancelled',
+                items: [],
+                totalCalories: 0,
+            };
+        }
+
         console.error('Portkey API error:', error);
         return {
             success: false,
@@ -307,11 +349,13 @@ export const analyzeFood = async (
  * Analyze food from text description using Portkey AI Gateway with structured output
  * @param description - Text description of the food
  * @param mode - Cooking mode (light, homemade, restaurant)
+ * @param signal - Optional AbortSignal for cancellation
  * @returns Analysis result with food items and calories
  */
 export const analyzeFoodFromText = async (
     description: string,
-    mode: string
+    mode: string,
+    signal?: AbortSignal
 ): Promise<AnalysisResult> => {
     try {
         const textPrompt = `
@@ -347,6 +391,7 @@ INSTRUCTIONS:
             maxTokens: 4096,
             temperature: 0.4,
             useStructuredOutput: true,
+            signal,
         });
 
         if (!textContent) {
@@ -370,6 +415,16 @@ INSTRUCTIONS:
             };
         }
     } catch (error) {
+        // Handle aborted requests gracefully
+        if (error instanceof ResilientFetchError && error.code === 'aborted') {
+            return {
+                success: false,
+                error: 'Analysis cancelled',
+                items: [],
+                totalCalories: 0,
+            };
+        }
+
         console.error('Portkey text analysis error:', error);
         return {
             success: false,

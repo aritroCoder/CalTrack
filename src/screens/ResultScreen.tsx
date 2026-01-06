@@ -1,7 +1,7 @@
 // Result Screen
 // Analysis Result with Hero Image (Material 3)
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, ScrollView, Image, Dimensions, Alert } from 'react-native';
 import {
     Text,
@@ -24,6 +24,8 @@ import { RootStackParamList } from '../../App';
 
 type ResultScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Result'>;
 import { analyzeFood } from '../services/geminiService';
+import { getCurrentNetworkState } from '../services/networkStatus';
+import { ResilientFetchError } from '../services/networkClient';
 
 const { width, height } = Dimensions.get('window');
 
@@ -67,31 +69,101 @@ export const ResultScreen: React.FC = () => {
         setIsAnalyzing
     } = useAppStore();
 
+    // Abort controller for cancellation
+    const abortControllerRef = useRef<AbortController | null>(null);
+
+    // Status message for progress feedback
+    const [statusMessage, setStatusMessage] = useState<string>('Preparing analysis...');
+    
+    // Retry counter to trigger re-analysis when retry is clicked
+    const [retryCount, setRetryCount] = useState<number>(0);
+
     useEffect(() => {
         const analyze = async () => {
             // If we have image base64 data but no result and are marked as analyzing, trigger image analysis
             if (currentImageBase64 && !currentResult && isAnalyzing) {
+                // Create new abort controller for this request
+                const controller = new AbortController();
+                abortControllerRef.current = controller;
+
+                // Pre-flight network check
+                setStatusMessage('Checking connection...');
                 try {
-                    const result = await analyzeFood(currentImageBase64, 'image/jpeg', mode);
+                    const network = await getCurrentNetworkState();
+                    if (!network.isConnected || !network.isInternetReachable) {
+                        setCurrentResult({
+                            items: [],
+                            totalCalories: 0,
+                            success: false,
+                            error: 'You appear to be offline. Please check your connection and try again.',
+                        });
+                        setIsAnalyzing(false);
+                        return;
+                    }
+                } catch (checkError) {
+                    console.warn('Network check failed:', checkError);
+                    // Continue anyway - let the request fail naturally if needed
+                }
+
+                // Update status for upload phase
+                setStatusMessage('Uploading image...');
+
+                try {
+                    // Pass abort signal to analyzeFood
+                    const result = await analyzeFood(
+                        currentImageBase64,
+                        'image/jpeg',
+                        mode,
+                        controller.signal
+                    );
+
+                    // Check if we were aborted while waiting
+                    if (controller.signal.aborted) {
+                        return;
+                    }
+
                     setCurrentResult(result);
                 } catch (error) {
-                    console.error("Analysis failed:", error);
-                    Alert.alert("Analysis Failed", "Could not analyze the image. Please try again.");
+                    // Handle user cancellation silently
+                    if (error instanceof ResilientFetchError && error.code === 'aborted') {
+                        return;
+                    }
+
+                    console.error('Analysis failed:', error);
                     setCurrentResult({
                         items: [],
                         totalCalories: 0,
                         success: false,
-                        error: 'Analysis failed'
+                        error: error instanceof Error
+                            ? error.message
+                            : 'Analysis failed. Please try again.',
                     });
                 } finally {
                     setIsAnalyzing(false);
+                    abortControllerRef.current = null;
                 }
             }
             // For text mode: TextInputScreen handles the analysis and sets currentResult directly
             // We just keep isAnalyzing true until currentResult arrives (don't prematurely set it to false)
         };
         analyze();
-    }, [currentImageBase64, mode]);
+
+        // Cleanup - abort request if component unmounts
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+            }
+        };
+    }, [currentImageBase64, mode, retryCount]);
+
+    // Retry handler
+    const handleRetry = () => {
+        setCurrentResult(null);
+        setStatusMessage('Preparing analysis...');
+        setIsAnalyzing(true);
+        setRetryCount(prev => prev + 1); // Trigger useEffect re-run
+    };
 
     const handleAddToLog = async () => {
         if (currentResult && currentResult.success) {
@@ -128,6 +200,11 @@ export const ResultScreen: React.FC = () => {
     };
 
     const handleCancel = () => {
+        // Abort the in-flight request
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+        }
         setIsAnalyzing(false);
         setCurrentResult(null);
         setCurrentImageUri(null);
@@ -140,7 +217,10 @@ export const ResultScreen: React.FC = () => {
         return (
             <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={{ marginTop: 20, color: theme.colors.onSurfaceVariant }}>Analyzing your food...</Text>
+                {/* Dynamic status message */}
+                <Text style={{ marginTop: 20, color: theme.colors.onSurfaceVariant }}>
+                    {statusMessage}
+                </Text>
                 {/* Show thumbnail if available */}
                 {currentImageUri && (
                     <Image source={{ uri: currentImageUri }} style={{ width: 100, height: 100, borderRadius: 12, marginTop: 20 }} />
@@ -157,7 +237,7 @@ export const ResultScreen: React.FC = () => {
         );
     }
 
-    // Error State
+    // Error State - with Retry button
     if (currentResult && !currentResult.success) {
         return (
             <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background, padding: 20, justifyContent: 'center', alignItems: 'center' }}>
@@ -166,8 +246,12 @@ export const ResultScreen: React.FC = () => {
                 <Text variant="bodyMedium" style={{ marginTop: 10, textAlign: 'center', color: theme.colors.onSurfaceVariant }}>
                     {currentResult.error || "We couldn't identify the food. Please try again."}
                 </Text>
-                <Button mode="contained" onPress={handleDiscard} style={{ marginTop: 30 }}>
-                    Try Again
+                {/* Retry button */}
+                <Button mode="contained" onPress={handleRetry} style={{ marginTop: 30, borderRadius: 30 }}>
+                    Retry
+                </Button>
+                <Button mode="text" onPress={handleDiscard} style={{ marginTop: 10 }}>
+                    Discard
                 </Button>
             </SafeAreaView>
         );
